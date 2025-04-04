@@ -73,7 +73,7 @@ class BaseLLMClient:
         json_mode: bool = False,
     ) -> tuple[str, int, int]:
         """
-        Call the Anthropic Claude model with the given conversation.
+        Call the model with the given conversation.
 
         Low-level method that streams the response chunks.
         Use `__call__` instead of this method.
@@ -88,16 +88,11 @@ class BaseLLMClient:
         """
         Adapt the conversation messages to the format expected by the LLM.
 
-        Claude only recognizes "user" and "assistant roles"
-
         :param convo: Conversation to adapt.
         :return: Adapted conversation messages.
         """
         messages = []
         for msg in convo.messages:
-            if msg.role == "function":
-                raise ValueError("Anthropic Claude doesn't support function calling")
-
             role = "user" if msg.role in ["user", "system"] else "assistant"
             if messages and messages[-1]["role"] == role:
                 messages[-1]["content"] += "\n\n" + msg.content
@@ -138,8 +133,6 @@ class BaseLLMClient:
         :param json_mode: If True, the response is expected to be JSON.
         :return: Tuple of the (parsed) response and request log entry.
         """
-        import anthropic
-        import groq
         import openai
 
         if temperature is None:
@@ -191,7 +184,7 @@ class BaseLLMClient:
                     temperature=temperature,
                     json_mode=json_mode,
                 )
-            except (openai.APIConnectionError, anthropic.APIConnectionError, groq.APIConnectionError) as err:
+            except (openai.APIConnectionError) as err:
                 log.warning(f"API connection error: {err}", exc_info=True)
                 request_log.error = str(f"API connection error: {err}")
                 request_log.status = LLMRequestStatus.ERROR
@@ -206,7 +199,7 @@ class BaseLLMClient:
                 request_log.error = str(f"Read error: {err}")
                 request_log.status = LLMRequestStatus.ERROR
                 continue
-            except (openai.RateLimitError, anthropic.RateLimitError, groq.RateLimitError) as err:
+            except (openai.RateLimitError) as err:
                 log.warning(f"Rate limit error: {err}", exc_info=True)
                 request_log.error = str(f"Rate limit error: {err}")
                 request_log.status = LLMRequestStatus.ERROR
@@ -221,10 +214,10 @@ class BaseLLMClient:
                     # RateLimitError that shouldn't be retried, eg. insufficient funds
                     err_msg = err.response.json().get("error", {}).get("message", "Rate limiting error.")
                     raise APIError(err_msg) from err
-            except (openai.NotFoundError, anthropic.NotFoundError, groq.NotFoundError) as err:
+            except (openai.NotFoundError) as err:
                 err_msg = err.response.json().get("error", {}).get("message", f"Model not found: {self.config.model}")
                 raise APIError(err_msg) from err
-            except (openai.AuthenticationError, anthropic.AuthenticationError, groq.AuthenticationError) as err:
+            except (openai.AuthenticationError) as err:
                 log.warning(f"Key expired: {err}", exc_info=True)
                 err_msg = err.response.json().get("error", {}).get("message", "Incorrect API key")
                 if "[BricksLLM]" in err_msg:
@@ -235,13 +228,12 @@ class BaseLLMClient:
                             continue
 
                 raise APIError(err_msg) from err
-            except (openai.APIStatusError, anthropic.APIStatusError, groq.APIStatusError) as err:
+            except (openai.APIStatusError) as err:
                 # Token limit exceeded (in original gpt-pilot handled as
-                # TokenLimitError) is thrown as 400 (OpenAI, Anthropic) or 413 (Groq).
+                # TokenLimitError) is thrown as 400 (OpenAI).
                 # All providers throw an exception that is caught here.
-                # OpenAI and Groq return a `code` field in the error JSON that lets
-                # us confirm that we've breached the token limit, but Anthropic doesn't,
-                # so we can't be certain that's the problem in Anthropic case.
+                # OpenAI returns a `code` field in the error JSON that lets
+                # us confirm that we've breached the token limit.
                 # Here we try to detect that and tell the user what happened.
                 log.info(f"API status error: {err}")
                 try:
@@ -257,7 +249,7 @@ class BaseLLMClient:
                 except Exception as e:
                     err_code = f"Error parsing response: {str(e)}"
                 if err_code in ("request_too_large", "context_length_exceeded", "string_above_max_length"):
-                    # Handle OpenAI and Groq token limit exceeded
+                    # Handle OpenAI token limit exceeded
                     # OpenAI will return `string_above_max_length` for prompts more than 1M characters
                     message = "".join(
                         [
@@ -273,7 +265,7 @@ class BaseLLMClient:
                 request_log.error = str(f"API error: {err}")
                 request_log.status = LLMRequestStatus.ERROR
                 continue
-            except (openai.APIError, anthropic.APIError, groq.APIError) as err:
+            except (openai.APIError) as err:
                 # Generic LLM API error
                 # Make sure this handler is last in the chain as some of the above
                 # errors inherit from these `APIError` classes
