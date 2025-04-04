@@ -10,7 +10,6 @@ from core.agents.response import AgentResponse
 from core.db.models import Specification
 from core.llm.parser import JSONParser
 from core.log import get_logger
-from core.telemetry import telemetry
 from core.templates.base import BaseProjectTemplate, NoOptions
 from core.templates.example_project import EXAMPLE_PROJECTS
 from core.templates.registry import (
@@ -107,7 +106,6 @@ class Architect(BaseAgent):
         await self.check_system_dependencies(spec)
 
         self.next_state.specification = spec
-        telemetry.set("templates", spec.templates)
         self.next_state.action = ARCHITECTURE_STEP_NAME
         return AgentResponse.done(self)
 
@@ -135,29 +133,6 @@ class Architect(BaseAgent):
         )
         tpl: TemplateSelection = await llm(convo, parser=JSONParser(TemplateSelection))
         templates = {}
-        # if tpl.template:
-        #     answer = await self.ask_question(
-        #         f"Do you want to use the '{tpl.template.name}' template?",
-        #         buttons={"yes": "Yes", "no": "No"},
-        #         default="yes",
-        #         buttons_only=True,
-        #         hint="Project templates are here to speed up start of your app development and save tokens and time.\n"
-        #         "Choose 'Yes' to use suggested template for your app.\n"
-        #         "If you choose 'No', project will be created from scratch.",
-        #     )
-        #
-        #     if answer.button == "no":
-        #         return tpl.architecture, templates
-        #
-        #     template_class = PROJECT_TEMPLATES.get(tpl.template)
-        #     if template_class:
-        #         options = await self.configure_template(spec, template_class)
-        #         templates[tpl.template] = template_class(
-        #             options,
-        #             self.state_manager,
-        #             self.process_manager,
-        #         )
-
         return tpl.architecture, templates
 
     async def plan_architecture(self, spec: Specification):
@@ -184,7 +159,6 @@ class Architect(BaseAgent):
         spec.templates = {t.name: t.options_dict for t in templates.values()}
         spec.system_dependencies = [d.model_dump() for d in arch.system_dependencies]
         spec.package_dependencies = [d.model_dump() for d in arch.package_dependencies]
-        telemetry.set("architecture", json.loads(arch.model_dump_json()))
 
     async def check_compatibility(self, arch: Architecture) -> bool:
         warn_system_deps = [dep.name for dep in arch.system_dependencies if dep.name.lower() in WARN_SYSTEM_DEPS]
@@ -222,7 +196,6 @@ class Architect(BaseAgent):
         spec.system_dependencies = arch["system_dependencies"]
         spec.package_dependencies = arch["package_dependencies"]
         spec.templates = arch["templates"]
-        telemetry.set("templates", spec.templates)
 
     async def check_system_dependencies(self, spec: Specification):
         """
