@@ -14,20 +14,12 @@ from core.llm.anthropic_client import CustomAssertionError
 from core.llm.base import APIError, BaseLLMClient
 from core.log import get_logger
 from core.state.state_manager import StateManager
-from core.telemetry import telemetry
 from core.ui.base import ProjectStage, UIBase, UIClosedError, UserInput, pythagora_source
 
 log = get_logger(__name__)
 
 
-telemetry_sent = False
-
-
 async def cleanup(ui: UIBase):
-    global telemetry_sent
-    if not telemetry_sent:
-        await telemetry.send()
-        telemetry_sent = True
     await ui.stop()
 
 
@@ -48,17 +40,12 @@ async def run_project(sm: StateManager, ui: UIBase, args) -> bool:
     :return: True if the orchestrator exited successfully, False otherwise.
     """
 
-    telemetry.set("app_id", str(sm.project.id))
-    telemetry.set("initial_prompt", sm.current_state.specification.description)
-
     orca = Orchestrator(sm, ui, args=args)
     success = False
     try:
         success = await orca.run()
-        telemetry.set("end_result", "success:exit" if success else "failure:api-error")
     except (KeyboardInterrupt, UIClosedError):
         log.info("Interrupted by user")
-        telemetry.set("end_result", "interrupt")
         await sm.rollback()
     except APIError as err:
         log.warning(f"LLM API error occurred: {err.message}")
@@ -66,7 +53,6 @@ async def run_project(sm: StateManager, ui: UIBase, args) -> bool:
             f"Stopping Pythagora due to an error while calling the LLM API: {err.message}",
             source=pythagora_source,
         )
-        telemetry.set("end_result", "failure:api-error")
         await sm.rollback()
     except CustomAssertionError as err:
         log.warning(f"Anthropic assertion error occurred: {str(err)}")
@@ -74,14 +60,12 @@ async def run_project(sm: StateManager, ui: UIBase, args) -> bool:
             f"Stopping Pythagora due to an error inside Anthropic SDK. {str(err)}",
             source=pythagora_source,
         )
-        telemetry.set("end_result", "failure:assertion-error")
         await sm.rollback()
     except Exception as err:
         log.error(f"Uncaught exception: {err}", exc_info=True)
-        stack_trace = telemetry.record_crash(err)
         await sm.rollback()
         await ui.send_message(
-            f"Stopping Pythagora due to error:\n\n{stack_trace}",
+            f"Stopping Pythagora due to error:\n\n{err}",
             source=pythagora_source,
         )
 
@@ -138,9 +122,6 @@ async def llm_api_check(ui: UIBase) -> bool:
 
     success = all(results)
 
-    if not success:
-        telemetry.set("end_result", "failure:api-error")
-
     return success
 
 
@@ -169,22 +150,8 @@ async def start_new_project(sm: StateManager, ui: UIBase) -> bool:
             source=pythagora_source,
             full_screen=True,
         )
-        await telemetry.trace_code_event(
-            "stack-choice-other",
-            {"language": language.text},
-        )
         await ui.send_message("Thank you for submitting your request to support other languages.")
         return False
-    elif stack.button == "node":
-        await telemetry.trace_code_event(
-            "stack-choice",
-            {"language": "node"},
-        )
-    elif stack.button == "python":
-        await telemetry.trace_code_event(
-            "stack-choice",
-            {"language": "python"},
-        )
 
     while True:
         try:
@@ -232,7 +199,6 @@ async def run_pythagora_session(sm: StateManager, ui: UIBase, args: Namespace):
             return False
 
     if args.project or args.branch or args.step:
-        telemetry.set("is_continuation", True)
         success = await load_project(sm, args.project, args.branch, args.step)
         if not success:
             return False
@@ -257,7 +223,6 @@ async def async_main(
     :param args: Command-line arguments.
     :return: True if the application ran successfully, False otherwise.
     """
-    global telemetry_sent
 
     if args.list:
         await list_projects(db)
@@ -276,29 +241,10 @@ async def async_main(
         success = await delete_project(db, args.delete)
         return success
 
-    telemetry.set("user_contact", args.email)
-    if args.extension_version:
-        telemetry.set("is_extension", True)
-        telemetry.set("extension_version", args.extension_version)
-
     sm = StateManager(db, ui)
     ui_started = await ui.start()
     if not ui_started:
         return False
-
-    telemetry.start()
-
-    # Set up signal handlers
-    def signal_handler(sig, frame):
-        if not telemetry_sent:
-            sync_cleanup(ui)
-        sys.exit(0)
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, signal_handler)
-
-    # Register the cleanup function
-    atexit.register(sync_cleanup, ui)
 
     try:
         success = await run_pythagora_session(sm, ui, args)
