@@ -11,13 +11,6 @@ log = get_logger(__name__)
 
 
 SETTINGS_APP_NAME = "GPT Pilot"
-DEFAULT_TELEMETRY_ENDPOINT = "https://api.pythagora.io/telemetry"
-
-
-class TelemetrySettings(BaseModel):
-    id: str = Field(default_factory=lambda: uuid4().hex, description="Unique telemetry ID")
-    enabled: bool = Field(True, description="Whether telemetry should send stats to the server")
-    endpoint: str = Field(DEFAULT_TELEMETRY_ENDPOINT, description="Telemetry server endpoint")
 
 
 def resolve_config_dir() -> Path:
@@ -57,11 +50,9 @@ class UserSettings(BaseModel):
     from the module:
 
     >>> from config.user_settings import settings
-    >>> print(settings.telemetry.id)
     >>> print(settings.config_path)
     """
 
-    telemetry: TelemetrySettings = TelemetrySettings()
     _config_path: str = PrivateAttr("")
 
     @staticmethod
