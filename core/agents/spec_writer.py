@@ -6,7 +6,6 @@ from core.db.models import Complexity
 from core.db.models.project_state import IterationStatus
 from core.llm.parser import StringParser
 from core.log import get_logger
-from core.telemetry import telemetry
 
 # If the project description is less than this, perform an analysis using LLM
 ANALYZE_THRESHOLD = 1500
@@ -44,13 +43,6 @@ class SpecWriter(BaseAgent):
         user_description = self.current_state.epics[0]["description"]
 
         complexity = await self.check_prompt_complexity(user_description)
-        await telemetry.trace_code_event(
-            "project-description",
-            {
-                "initial_prompt": user_description,
-                "complexity": complexity,
-            },
-        )
 
         reviewed_spec = user_description
         # if len(user_description) < ANALYZE_THRESHOLD and complexity != Complexity.SIMPLE:
@@ -61,9 +53,6 @@ class SpecWriter(BaseAgent):
         self.next_state.specification.original_description = user_description
         self.next_state.specification.description = reviewed_spec
         self.next_state.specification.complexity = complexity
-        telemetry.set("initial_prompt", user_description)
-        telemetry.set("updated_prompt", reviewed_spec)
-        telemetry.set("is_complex_app", complexity != Complexity.SIMPLE)
 
         self.next_state.action = SPEC_STEP_NAME
         return AgentResponse.done(self)
@@ -95,7 +84,6 @@ class SpecWriter(BaseAgent):
         if user_response.button == "yes":
             self.next_state.specification = self.current_state.specification.clone()
             self.next_state.specification.description = updated_spec
-            telemetry.set("updated_prompt", updated_spec)
 
         if iteration_mode:
             self.next_state.current_iteration["status"] = IterationStatus.FIND_SOLUTION
@@ -144,14 +132,6 @@ class SpecWriter(BaseAgent):
                 )
                 if confirm.cancelled or confirm.button == "continue" or confirm.text == "":
                     updated_spec = response.strip()
-                    await telemetry.trace_code_event(
-                        "spec-writer-questions",
-                        {
-                            "num_questions": n_questions,
-                            "num_answers": n_answers,
-                            "new_spec": updated_spec,
-                        },
-                    )
                     return updated_spec
                 convo.user(confirm.text)
 
@@ -177,14 +157,6 @@ class SpecWriter(BaseAgent):
                     )
                     if confirm.cancelled or confirm.button == "continue" or confirm.text == "":
                         updated_spec = response.strip()
-                        await telemetry.trace_code_event(
-                            "spec-writer-questions",
-                            {
-                                "num_questions": n_questions,
-                                "num_answers": n_answers,
-                                "new_spec": updated_spec,
-                            },
-                        )
                         return updated_spec
                     convo.user(confirm.text)
                     continue
@@ -195,6 +167,7 @@ class SpecWriter(BaseAgent):
                     continue
                 else:
                     convo.user(user_response.text)
+
 
     async def review_spec(self, desc: str, spec: str) -> str:
         convo = AgentConvo(self).template("review_spec", desc=desc, spec=spec)
